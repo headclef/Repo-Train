@@ -1,6 +1,6 @@
 # Train — Design Specification
 
-> Status: **design locked, pre-implementation**
+> Status: **v1 implemented — pending in-game verification** (see §11–§12)
 > Repo: https://github.com/headclef/Repo-Train
 > Author: headclef · Part of the R.E.P.O. mod suite
 
@@ -368,30 +368,57 @@ The threshold *bases* are exposed for advanced tuning but default to the locked 
 
 ---
 
-## 11. Implementation task list
+## 11. Implementation status (v1)
 
-Pure‑logic, no game symbols (safe to build first):
-- [ ] `Train.cs` — plugin entry, config binding.
-- [ ] `SaveData.cs` — progress counters, `Threshold`/`LevelFromProgress`/`EffectiveLevel`,
-      reset, flush.
+Done (builds clean against R.E.P.O.GameLibs.Steam, deployed to BepInEx/plugins/headclef-Train):
+- [x] `Train.cs` - plugin entry, hard dependencies, config (toggle + unit conversions).
+- [x] `SaveData.cs` - progress counters in `REPOModData/Train/save.cfg`, the threshold/level
+      math, batched `Flush`, `ResetAll`.
+- [x] `TrainApplier.cs` - overlay for all 11 stats + native effect for Strength/Launch.
+- [x] `TrainTracker.cs` - per-frame sampler (Health, Sprint, Stamina walk + standing regen,
+      Crouch Rest, Extra Jump) + discrete-event entry point.
+- [x] `Patches/TrainPatch.cs` - `PlayerController.Update` sampler; `PlayerTumble.TumbleRequest`
+      (launch), `PhysGrabber.PhysGrabStarted` (grab -> Range + Strength),
+      `PhysGrabber.GrabLinkClimb` (tumble-climb); lifecycle (`PlayerAdd`, `ReceiveSyncData`,
+      `OnSceneSwitch`, `ResetProgress`) with a 1 s apply/flush watchdog.
+- [x] `TrainMenu.cs` - MenuLib "Train" button beside Improve's + scrollable progress page.
+- [x] `manifest.json`, `LICENSE`, `README.md`; added to `Repo.slnx` (BuildDependency on
+      Improve + Character Stats).
 
-Needs game‑lib symbol verification (R.E.P.O.GameLibs.Steam):
-- [ ] Counting hooks — exact methods for launch / extra‑jump / throw / grab(range,strength) /
-      tumble‑climb; per‑frame samplers for health delta, sprint/walk distance, standing &
-      crouching stamina regen, wing‑glide time.
-- [ ] Apply layer — confirm the `UpdateX…RightAway` helper names per stat (and fall back to
-      direct formulas where absent); precise reverse‑on‑drop / scene‑switch like Berserk.
-- [ ] Menu — Train page via MenuLib (sibling button), optional embedded tab via patching
-      `ImproveMenu`.
+Confirmed game symbols (via a Mono.Cecil dump of the GameLibs assembly):
+`PlayerTumble.TumbleRequest(bool _isTumbling, bool _playerInput)`, `.isTumbling`,
+`.tumbleLaunch`; `PhysGrabber.PhysGrabStarted()`, `.GrabLinkClimb(Vector3)`, `.grabStrength`,
+`.instance`; `PlayerHealth.health`/`.maxHealth`; `PlayerController.sprinting`/`.Crouching`/
+`.moving`/`.EnergyCurrent`/`.JumpExtraCurrent`/`.playerAvatarScript`.
 
-Packaging:
-- [ ] `manifest.json`, `icon.png`, `LICENSE`, `README.md`; add to `Repo.slnx`; extend
-      `pack-dists.ps1` (TS root layout + NX `BepInEx/plugins/headclef-Train/`).
+Deferred (no clean hook confirmed - left out of v1, documented):
+- [ ] **Throw** counting - no obvious PhysGrabber throw method; needs the in-game throw path.
+- [ ] **Tumble Wings** counting - needs a confirmed "gliding active" signal.
+- [ ] **Native effects beyond Strength/Launch** - Health/Stamina/Sprint/Jump/Range/Climb
+      currently affect only the consumer mods + UI through the overlay, not the game's intrinsic
+      values. Adding them needs each stat's per-level apply formula verified in-game.
+
+Packaging follow-up:
+- [ ] `icon.png`; extend `pack-dists.ps1` (TS root layout + NX `BepInEx/plugins/headclef-Train/`).
 
 ---
 
-## 12. Open question deferred to playtest
+## 12. In-game verification checklist
 
-Only tuning remains: the per‑stat unit values (§3) and whether Grab Range should require a
-minimum distance and Grab Strength should count by event vs. time‑under‑load. The mechanics are
-locked.
+The mechanics are locked; these assumptions were made where the game's behaviour could not be
+confirmed without running it, and should be checked during testing:
+
+1. **Tumble Launch hook** - is one player-initiated `TumbleRequest(true, true)` exactly one
+   "launch"? (Flagship action - verify the count rises once per launch.)
+2. **Grab counting** - `PhysGrabStarted` feeds both Grab Range and Grab Strength 1:1; confirm it
+   fires once per grab, then decide whether Strength should be heavy-only.
+3. **Tumble Climb** - confirm `GrabLinkClimb` corresponds to the tumble-climb action.
+4. **Distance source** - `PlayerController.transform.position` is assumed to be the player's
+   world position for Sprint/Stamina distance; verify the metres feel right, then tune units.
+5. **Health** - confirm damage and every heal source (Constitution, truck, packs, Medic revive)
+   register, and the respawn guard isn't over-counting.
+6. **Native effect** - confirm trained Strength/Launch add real grab/launch force on top of
+   Improve, and that Berserk + Train compose without leaking into the save (overlay is
+   last-writer-wins per key, so Berserk transiently overrides Strength/Launch while active).
+
+Unit values (§3) are tunable from the config; the threshold bases (9/25/100) are constants for v1.
