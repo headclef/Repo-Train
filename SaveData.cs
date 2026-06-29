@@ -63,19 +63,32 @@ public static class SaveData
     };
 
     private static readonly Dictionary<string, TrainStat> _byId = new();
+    private static ConfigFile _save;
 
     internal static void Initialize()
     {
-        ConfigFile save = new(
+        _save = new ConfigFile(
             Path.Combine(Application.persistentDataPath, "REPOModData/Train/save.cfg"),
             false);
 
+        // We mutate progress from a per-frame sampler, so disable write-on-set and instead
+        // flush the file ourselves on a timer / scene switch (see Flush). This keeps the
+        // save off the hot path while never losing more than the last commit interval.
+        _save.SaveOnConfigSet = false;
+
         foreach (var s in Stats)
         {
-            s.Progress = save.Bind("Progress", s.Id, 0,
+            s.Progress = _save.Bind("Progress", s.Id, 0,
                 $"Lifetime use-points accumulated for {s.Display}.");
             _byId[s.Id] = s;
         }
+    }
+
+    /// <summary>Persist any pending progress to disk. Cheap when nothing changed.</summary>
+    public static void Flush()
+    {
+        try { _save?.Save(); }
+        catch { /* disk hiccup — next flush will retry */ }
     }
 
     public static TrainStat? ById(string id) => _byId.TryGetValue(id, out var s) ? s : null;
@@ -94,6 +107,7 @@ public static class SaveData
     {
         foreach (var s in Stats)
             s.Progress.Value = 0;
+        Flush();
         Train.Logger.LogInfo("Train progress reset — all stats wiped.");
     }
 
