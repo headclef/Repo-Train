@@ -1,0 +1,12 @@
+{
+    "name": "Train",
+    "version_number": "1.0.0",
+    "website_url": "https://github.com/headclef/Repo-Train",
+    "description": "Train your character stats by using them in the field, capped by your Improve level, for R.E.P.O.",
+    "dependencies": [
+        "BepInEx-BepInExPack-5.4.2100",
+        "nickklmao-MenuLib-2.5.1",
+        "headclef-CharacterStats-1.2.0",
+        "headclef-Improve-1.1.3"
+    ]
+}
