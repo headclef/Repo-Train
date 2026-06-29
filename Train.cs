@@ -41,6 +41,7 @@ public class Train : BaseUnityPlugin
 
         BindConfiguration();
         SaveData.Initialize();
+        TrainMenu.Initialize();
 
         Harmony ??= new Harmony(Info.Metadata.GUID);
         Harmony.PatchAll();
