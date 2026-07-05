@@ -18,9 +18,10 @@ The two stack — your final in‑game stat is `base + Improve allocation + Trai
 - Caps every trained level at your current **Improve level** — so practice and wealth advance
   together.
 - Persists progress **globally across all saves**, and never loses it on death.
-- Surfaces trained levels through [Character Stats](https://github.com/headclef/Repo-CharacterStats),
-  so the rest of the suite (Armor, Increase Tumble Damage, Constitution, Agility, UI) reacts
-  automatically.
+- Applies trained levels through Improve's own stat application, so they land **natively** —
+  real max health, sprint speed, grab strength, launch force — and the rest of the suite
+  (Armor, Increase Tumble Damage, Constitution, Agility, UI) reacts automatically. A level
+  earned mid‑level is felt within about a second.
 
 ## How leveling works
 
@@ -75,17 +76,15 @@ menus — and your progress is never reset by dying or finishing a run.
 ## Requirements
 
 - [BepInEx 5.x](https://github.com/BepInEx/BepInEx) installed for R.E.P.O.
-- **[Improve](https://github.com/headclef/Repo-Improve)** — provides the level ceiling and the
-  menu.
-- **[Character Stats](https://github.com/headclef/Repo-CharacterStats)** — surfaces trained
-  levels to the rest of the suite.
+- **[Improve](https://github.com/headclef/Repo-Improve)** — provides the level ceiling and
+  carries trained levels into the game.
 - **[MenuLib](https://thunderstore.io/c/repo/p/nickklmao/MenuLib/)** — for the Train menu.
 
 ## Installation
 
 1. Install via **Thunderstore** (recommended) — dependencies are pulled in automatically.
-2. Or manually: place `Train.dll` into your `BepInEx/plugins` folder (alongside Improve,
-   Character Stats, and MenuLib).
+2. Or manually: place `Train.dll` into your `BepInEx/plugins` folder (alongside Improve
+   and MenuLib).
 3. Launch the game and open the **Train** menu to watch your progress.
 
 ## Multiplayer

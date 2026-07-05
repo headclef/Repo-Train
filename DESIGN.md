@@ -1,6 +1,6 @@
 # Train — Design Specification
 
-> Status: **v1 implemented — pending in-game verification** (see §11–§12)
+> Status: **v1.1 — apply layer reworked after the first in-game test** (see §6, §11–§12)
 > Repo: https://github.com/headclef/Repo-Train
 > Author: headclef · Part of the R.E.P.O. mod suite
 
@@ -10,9 +10,10 @@ Train is the **mastery axis** (*use* a stat in the field → earn that stat's le
 practice). The two are orthogonal and stack: your final in‑game stat is
 `base + Improve allocation + Train level`.
 
-Improve does **not** depend on Train. Train depends on Improve (it reads Improve's level as
-the trainable ceiling) and on Character Stats (it surfaces trained levels to the rest of the
-suite). The dependency is strictly one‑directional.
+Improve does **not** depend on Train. Train depends on Improve — it reads Improve's level as
+the trainable ceiling AND rides Improve's stat application to make trained levels land in the
+game (see §6). The dependency is strictly one‑directional: Train patches Improve, Improve
+stays unaware of Train.
 
 ---
 
@@ -191,80 +192,81 @@ never loses progress (the 17‑launches case).
 
 ## 6. Applying trained levels to the game
 
-This is the crux. There are two consumers of a trained level:
+This is the crux, and it was **reworked after the first in-game test**. The v1.0 approach
+(Character Stats overlay + hand-applied native effect for two stats, the "Berserk pattern")
+raised the *visible* levels but the game never *felt* them — because nothing in the game reads
+the Character Stats overlay, and the game re-derives every felt stat from its own
+`StatsManager.playerUpgrade*` dictionaries.
 
-1. **Suite mods** that read levels from Character Stats (UI, Armor, Increase Tumble Damage,
-   Constitution, Agility) — these benefit automatically the moment the level is in the overlay.
-2. **The game's native effect** (actual max health, sprint speed, grab strength, tumble launch
-   force, …) — the game derives these from its own `StatsManager.playerUpgrade*` dictionaries.
+### How the game actually applies upgrades (confirmed via IL scan of Assembly-CSharp)
 
-### Why Train must NOT write to the StatsManager dictionaries
+- Only `RunManager` and `StatsManager` are `DontDestroyOnLoad`. **Every player object
+  (PlayerController, PlayerAvatar, PhysGrabber, PlayerTumble, PlayerHealth) is recreated each
+  scene** and re-derives its live values from the `playerUpgrade*` dictionaries on spawn:
+  `PlayerController.LateStart` (speed/stamina/extra jump), `PhysGrabber.LateStart`
+  (strength/throw/range), `PlayerAvatar.LateStart` (tumble climb/wings, crouch rest),
+  `PlayerTumble.SetupDone` (launch), `PlayerHealth.Fetch` (max health).
+- Mid-level pickups go through `PunManager.UpgradePlayerX(steamID, value)` → dictionary write
+  plus an `Update…RightAway` delta applied straight to the live component.
 
-Improve owns those dictionaries via an idempotent reconcile + watchdog (`SaveData.ApplyStats`,
-every 0.5 s) and a save‑strip guard. If Train wrote its bonus on top, Improve's reconcile would
-see `cur > lastWritten`, fold Train's bonus into *its* base, and the save‑strip would then bake
-Train's bonus into the `.es3` file as if it were the true base — re‑applied and **compounded**
-every save/quit/relaunch. This is exactly the leak Berserk was built to avoid. So, like Berserk,
-**Train never writes to the `playerUpgrade*` dictionaries.**
+So the dictionaries are the **only** persistent apply path — which is exactly why Improve
+(which asserts them with its 0.5 s reconcile) is felt, and the v1.0 overlay was not.
 
-### The two‑part application (Berserk pattern, generalized)
+### The rework: ride Improve's application (single writer)
 
-**Part A — consumer‑visible level (overlay).** Register each trained level as a Character Stats
-temporary bonus so every consumer sees it instantly:
+Train must not write the dictionaries itself — two independent reconcilers fight, and the
+save-strip ordering between two mods is undefined (leak risk). Instead, Train **injects its
+levels into Improve's own pipeline** with one Harmony postfix:
 
 ```csharp
-using static Character_Stats.Character_Stats;
-SetTemporaryBonus(steamId, "Launch", trainedLaunchLevel);   // and the rest
+[HarmonyPatch(typeof(global::Improve.SaveData), "GetAllocationForStat")]
+[HarmonyPostfix]
+static void Postfix(string statName, ref int __result) =>
+    __result += SaveData.EffectiveLevelForGameField(statName);
 ```
 
-This overlay is additive at read time, is **never** written to StatsManager, and is invisible
-to Improve and to the save file. Unlike Berserk's transient toggle, Train's overlay is
-persistent‑but‑reapplied: set/update it on level start and whenever a trained level changes;
-clear and re‑apply across scene switches so it never dangles (Berserk's `OnSceneSwitch` →
-`ForceDeactivate` discipline).
+Improve's reconcile then writes `base + allocation + trained level` into the dictionaries,
+its save-strip strips the **combined** delta before the game serializes, and its run-reset
+handling covers Train too. One writer, one reconcile, one strip — no compounding, no leak.
+Every stat lands **natively** at every level spawn via the game's own derivation, and
+Character Stats (which reads the same dictionaries) surfaces the totals to every consumer mod
+automatically. The v1.0 overlay is **removed** — with the levels in the dictionaries it would
+double-count in Character Stats space, and the Character Stats dependency is dropped entirely.
 
-**Part B — native effect.** Because the overlay is invisible to the game, Train must apply the
-real effect itself, for each trainable stat. Preferred mechanism — **reuse the game's own apply
-helper via a synchronous, momentary dict inflation** (no leak, no hardcoded formulas):
+### Transient layer — feeling a level earned mid-level
 
-```
-read V = playerUpgradeX[steamId]            // already includes Improve's level
-playerUpgradeX[steamId] = V + trainedLevel  // momentary
-call the game's UpdateX...RightAway(...)     // game sets the component from the dict
-playerUpgradeX[steamId] = V                  // restore immediately
-```
+A ding mid-level reaches the dictionaries within Improve's next reconcile (≤0.5 s), but the
+game only re-derives on spawn. To make the ding felt immediately, `TrainApplier` applies the
+diff between the current effective level and the spawn-delivered level straight to the live
+components, mirroring the game's own `Update…RightAway` formulas (per level): Health
+`maxHealth += 20` + heal 20, Stamina `EnergyStart += 10` + refill, Extra Jump `JumpExtra += 1`,
+Sprint `SprintSpeed/SprintSpeedUpgrades/playerOriginalSprintSpeed += 1`, Launch
+`tumble.tumbleLaunch += 1`, Climb/Wings/Crouch Rest `avatar.upgradeX += 1`, Strength
+`grabStrength += 0.2`, Throw `throwStrength += 0.3`, Range `grabRange += 1`.
 
-Done synchronously inside one method, this is race‑free: Unity is single‑threaded, so Improve's
-0.5 s watchdog cannot interleave between the inflate and the restore. The component keeps the
-boosted value; the dictionary (and therefore Improve and the save) is untouched.
-
-Fallback for any stat lacking a clean `UpdateX…RightAway` helper — mirror the formula directly
-on the live component, as Berserk already does for two of them:
-
-```
-Grab Strength:  physGrabber.grabStrength += 0.2 × level
-Tumble Launch:  tumble.tumbleLaunch      += level
-```
-
-Either way, Train must **reverse** its component deltas precisely when a level drops or on scene
-switch (track the exact avatar + deltas applied, Berserk‑style), so it never corrupts a base
-value after a respawn.
+Levels never drop mid-level (progress and the Improve cap only grow), so the diff is
+**monotonic**: applied once, never reversed. The components die with the scene, the tracking
+resets on scene switch / controller or avatar change, and the next spawn derives everything
+from the dictionaries. The level-up heal/refill invalidates the tracker baseline so it is not
+counted as activity.
 
 ### Application timing & ordering
 
-- Apply **after** Improve has applied, so the dict already carries Improve's level when Train
-  inflates for the helper reuse (yielding `base + Improve + Train`). Train runs its own
-  short‑deferred apply + light watchdog (idempotent) like Improve, and re‑applies on
-  `StatsManager.PlayerAdd`, after `PunManager.ReceiveSyncData`, and on its periodic tick.
-- The Improve ceiling is read **live** each tick via `Improve.SaveData.CurrentLevel()`, so a
-  ding in Improve level lifts the cap (and unlocks already‑earned levels) without a relaunch.
+- The bridge is passive — it contributes whenever Improve reconciles (`PlayerAdd` + 3 frames,
+  sync completion, 0.5 s watchdog). The dictionaries persist across scenes, so every spawn
+  derivation sees the trained levels regardless of ordering within one frame.
+- `TrainApplier` re-baselines 4 frames after `PlayerAdd` (just after Improve's reconcile) and
+  applies mid-level diffs from a 1 s watchdog.
+- The Improve ceiling is read **live** via `Improve.SaveData.CurrentLevel()`, so a ding in
+  Improve level lifts the cap (and unlocks already‑earned levels) without a relaunch.
 
 ---
 
 ## 7. Suite integration (what comes for free)
 
-Because trained levels go through the Character Stats overlay, the rest of the suite reacts with
-zero extra code:
+Because trained levels land in the live `playerUpgrade*` dictionaries (via Improve) and
+Character Stats reads those same dictionaries, the rest of the suite reacts with zero extra
+code:
 
 - **UI** — shows boosted levels; a "Train" line/section can be added later.
 - **Increase Tumble Damage** — reads `Launch` → trained Launch raises tumble *damage*.
@@ -272,8 +274,9 @@ zero extra code:
 - **Constitution** — reads `Health` → trained Health raises passive regen.
 - **Agility** — reads `Stamina`/`Crouch Rest`/`Speed` → trained levels raise stamina regen.
 
-Train is fully **client‑side** and safe in any lobby — it only ever reads/boosts the local
-player and never writes networked state.
+Train is fully **client‑side** and safe in any lobby — Improve's dictionary writes are
+local-only (no network broadcast), and the transient layer only touches the local player's
+components.
 
 ---
 
@@ -305,10 +308,13 @@ Improve cap, flagged when cap‑limited), progress toward the next threshold, an
 
 ```csharp
 [BepInPlugin("headclef.Train", "Train", "1.0.0")]
-[BepInDependency("headclef.Improve",       BepInDependency.DependencyFlags.HardDependency)]
-[BepInDependency("headclef.CharacterStats", BepInDependency.DependencyFlags.HardDependency)]
-[BepInDependency("nickklmao.menulib",       BepInDependency.DependencyFlags.HardDependency)]
+[BepInDependency("headclef.Improve",  BepInDependency.DependencyFlags.HardDependency)]
+[BepInDependency("nickklmao.menulib", BepInDependency.DependencyFlags.HardDependency)]
 ```
+
+Character Stats is **not** a dependency since the §6 rework: trained levels reach the live
+dictionaries through Improve, which Character Stats already reads — consumer mods see them
+with no direct coupling.
 
 **`manifest.json`** (pin current suite versions — see the version‑consistency rule):
 
@@ -321,23 +327,18 @@ Improve cap, flagged when cap‑limited), progress toward the next threshold, an
     "dependencies": [
         "BepInEx-BepInExPack-5.4.2100",
         "nickklmao-MenuLib-2.5.1",
-        "headclef-CharacterStats-1.2.0",
         "headclef-Improve-1.1.3"
     ]
 }
 ```
 
 **`Train.csproj`** — same template as the other mods (netstandard2.1, the three NuGet feeds, the
-BepInEx/Unity/GameLibs/MenuLib package refs), plus **compile‑only file references** to the built
-Character Stats and Improve DLLs (the established cross‑mod pattern — file references + `.slnx`
-`BuildDependency`, never `ProjectReference`, to keep Thunderstore output isolated):
+BepInEx/Unity/GameLibs/MenuLib package refs), plus a **compile‑only file reference** to the built
+Improve DLL (the established cross‑mod pattern — file references + `.slnx` `BuildDependency`,
+never `ProjectReference`, to keep Thunderstore output isolated):
 
 ```xml
 <ItemGroup>
-  <Reference Include="Character Stats">
-    <HintPath>..\Character Stats\bin\Debug\netstandard2.1\Character Stats.dll</HintPath>
-    <Private>false</Private>
-  </Reference>
   <Reference Include="Improve">
     <HintPath>..\Improve\bin\Debug\netstandard2.1\Improve.dll</HintPath>
     <Private>false</Private>
@@ -345,9 +346,9 @@ Character Stats and Improve DLLs (the established cross‑mod pattern — file r
 </ItemGroup>
 ```
 
-Add Train to `Repo.slnx` with `BuildDependency` entries on **Improve** and **Character Stats**
-so they build first. Train calls `Improve.SaveData.CurrentLevel()` (public static) for the cap
-and `Character_Stats.*` for the overlay.
+Add Train to `Repo.slnx` with a `BuildDependency` on **Improve** so it builds first. Train
+calls `Improve.SaveData.CurrentLevel()` (public static) for the cap and Harmony-postfixes
+`Improve.SaveData.GetAllocationForStat` (internal — patched by name) for the apply bridge.
 
 ---
 
@@ -368,35 +369,38 @@ The threshold *bases* are exposed for advanced tuning but default to the locked 
 
 ---
 
-## 11. Implementation status (v1)
+## 11. Implementation status (v1.1)
 
 Done (builds clean against R.E.P.O.GameLibs.Steam, deployed to BepInEx/plugins/headclef-Train):
-- [x] `Train.cs` - plugin entry, hard dependencies, config (toggle + unit conversions).
+
+- [x] `Train.cs` - plugin entry, hard dependencies (Improve + MenuLib), config (toggle + unit
+      conversions).
 - [x] `SaveData.cs` - progress counters in `REPOModData/Train/save.cfg`, the threshold/level
-      math, batched `Flush`, `ResetAll`.
-- [x] `TrainApplier.cs` - overlay for all 11 stats + native effect for Strength/Launch.
+      math, batched `Flush`, `ResetAll`, `EffectiveLevelForGameField` (the bridge lookup).
+- [x] `TrainApplier.cs` - transient mid-level layer: monotonic diff between the current
+      effective level and the spawn-delivered level, applied with the game's own per-level
+      formulas; re-baselines on controller/avatar change, resets on scene switch.
 - [x] `TrainTracker.cs` - per-frame sampler (Health, Sprint, Stamina walk + standing regen,
       Crouch Rest, Extra Jump) + discrete-event entry point.
-- [x] `Patches/TrainPatch.cs` - `PlayerController.Update` sampler; `PlayerTumble.TumbleRequest`
-      (launch), `PhysGrabber.PhysGrabStarted` (grab -> Range + Strength),
-      `PhysGrabber.GrabLinkClimb` (tumble-climb); lifecycle (`PlayerAdd`, `ReceiveSyncData`,
+- [x] `Patches/TrainPatch.cs` - **Improve bridge** (`GetAllocationForStat` postfix — the
+      persistent apply layer, see §6); `PlayerController.Update` sampler;
+      `PlayerTumble.TumbleRequest` (launch), `PhysGrabber.PhysGrabStarted` (grab -> Range +
+      Strength), `PhysGrabber.GrabLinkClimb` (tumble-climb); lifecycle (`PlayerAdd`,
       `OnSceneSwitch`, `ResetProgress`) with a 1 s apply/flush watchdog.
 - [x] `TrainMenu.cs` - MenuLib "Train" button beside Improve's + scrollable progress page.
-- [x] `manifest.json`, `LICENSE`, `README.md`; added to `Repo.slnx` (BuildDependency on
-      Improve + Character Stats).
+- [x] `manifest.json`, `LICENSE`, `README.md`; in `Repo.slnx` with a BuildDependency on Improve.
 
-Confirmed game symbols (via a Mono.Cecil dump of the GameLibs assembly):
-`PlayerTumble.TumbleRequest(bool _isTumbling, bool _playerInput)`, `.isTumbling`,
-`.tumbleLaunch`; `PhysGrabber.PhysGrabStarted()`, `.GrabLinkClimb(Vector3)`, `.grabStrength`,
-`.instance`; `PlayerHealth.health`/`.maxHealth`; `PlayerController.sprinting`/`.Crouching`/
-`.moving`/`.EnergyCurrent`/`.JumpExtraCurrent`/`.playerAvatarScript`.
+**v1.0 → v1.1 (after the first in-game test):** levels rose but were not felt — the Character
+Stats overlay is invisible to the game. Replaced with the Improve bridge + transient layer
+(§6); the Character Stats dependency was dropped. Confirmed via IL scan of Assembly-CSharp:
+per-scene player objects re-derive from `playerUpgrade*` at spawn (`LateStart`/`SetupDone`/
+`Fetch`); only RunManager/StatsManager are `DontDestroyOnLoad`; `PunManager.UpgradePlayerX`
+methods are local-only (no RPC) and delta-apply via `Update…RightAway`.
 
-Deferred (no clean hook confirmed - left out of v1, documented):
+Deferred (no clean hook confirmed - left out, documented):
 - [ ] **Throw** counting - no obvious PhysGrabber throw method; needs the in-game throw path.
-- [ ] **Tumble Wings** counting - needs a confirmed "gliding active" signal.
-- [ ] **Native effects beyond Strength/Launch** - Health/Stamina/Sprint/Jump/Range/Climb
-      currently affect only the consumer mods + UI through the overlay, not the game's intrinsic
-      values. Adding them needs each stat's per-level apply formula verified in-game.
+      (The trained level now applies natively; only the counting hook is missing.)
+- [ ] **Tumble Wings** counting - needs a confirmed "gliding active" signal. (Same note.)
 
 Packaging follow-up:
 - [ ] `icon.png`; extend `pack-dists.ps1` (TS root layout + NX `BepInEx/plugins/headclef-Train/`).
@@ -417,8 +421,15 @@ confirmed without running it, and should be checked during testing:
    world position for Sprint/Stamina distance; verify the metres feel right, then tune units.
 5. **Health** - confirm damage and every heal source (Constitution, truck, packs, Medic revive)
    register, and the respawn guard isn't over-counting.
-6. **Native effect** - confirm trained Strength/Launch add real grab/launch force on top of
-   Improve, and that Berserk + Train compose without leaking into the save (overlay is
-   last-writer-wins per key, so Berserk transiently overrides Strength/Launch while active).
+6. **Felt effect (the v1.1 rework)** - trained levels must now be FELT natively for all stats:
+   more max health, faster sprint, extra jumps, stronger grab/launch, on top of Improve.
+   Verify (a) at level start after training in a previous level, and (b) immediately after a
+   mid-level ding (the transient layer, within ~1 s).
+7. **Save hygiene** - after a session with trained levels: quit, relaunch, continue — stats must
+   not have compounded (Improve's save-strip covers the combined delta; verify with the ES3
+   decrypt tool if in doubt).
+8. **Berserk composition** - Berserk's transient strength/launch boost and trained levels add
+   independent component deltas now (no shared overlay key) — verify they stack and reverse
+   cleanly.
 
 Unit values (§3) are tunable from the config; the threshold bases (9/25/100) are constants for v1.
