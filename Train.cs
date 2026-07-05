@@ -8,7 +8,6 @@ namespace Train;
 
 [BepInPlugin(PluginGuid, PluginName, PluginVersion)]
 [BepInDependency("headclef.Improve", BepInDependency.DependencyFlags.HardDependency)]
-[BepInDependency("headclef.CharacterStats", BepInDependency.DependencyFlags.HardDependency)]
 [BepInDependency("nickklmao.menulib", BepInDependency.DependencyFlags.HardDependency)]
 public class Train : BaseUnityPlugin
 {

@@ -38,10 +38,6 @@
 
   <!-- References to sibling mods (compile-only, not bundled) -->
   <ItemGroup>
-    <Reference Include="Character Stats">
-      <HintPath>..\Character Stats\bin\Debug\netstandard2.1\Character Stats.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
     <Reference Include="Improve">
       <HintPath>..\Improve\bin\Debug\netstandard2.1\Improve.dll</HintPath>
       <Private>false</Private>
