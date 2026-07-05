@@ -63,6 +63,7 @@ public static class SaveData
     };
 
     private static readonly Dictionary<string, TrainStat> _byId = new();
+    private static readonly Dictionary<string, TrainStat> _byGameField = new();
     private static ConfigFile _save;
 
     internal static void Initialize()
@@ -81,6 +82,7 @@ public static class SaveData
             s.Progress = _save.Bind("Progress", s.Id, 0,
                 $"Lifetime use-points accumulated for {s.Display}.");
             _byId[s.Id] = s;
+            _byGameField[s.GameField] = s;
         }
     }
 
@@ -151,6 +153,16 @@ public static class SaveData
     /// <summary>Effective level after the Improve ceiling is applied.</summary>
     public static int EffectiveLevel(TrainStat stat) =>
         Math.Min(TrainedLevel(stat), ImproveLevel());
+
+    /// <summary>
+    /// Effective level looked up by the StatsManager dictionary field name (e.g.
+    /// "playerUpgradeLaunch"). This is the bridge Improve's stat application queries —
+    /// see <c>TrainImproveBridgePatch</c>. Returns 0 for stats Train doesn't cover.
+    /// </summary>
+    public static int EffectiveLevelForGameField(string gameField) =>
+        gameField != null && _byGameField.TryGetValue(gameField, out var s)
+            ? EffectiveLevel(s)
+            : 0;
 
     /// <summary>True when the trained level is being held back by the Improve ceiling.</summary>
     public static bool IsCapped(TrainStat stat) => TrainedLevel(stat) > ImproveLevel();

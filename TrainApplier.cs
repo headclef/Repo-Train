@@ -1,141 +1,163 @@
+using System;
 using System.Collections.Generic;
-using static Character_Stats.Character_Stats;
 
 namespace Train;
 
 /// <summary>
-/// Pushes trained levels into the game in two layers, mirroring how Berserk avoids ever
-/// touching the StatsManager dictionaries (which Improve owns and strips from the save):
+/// Makes trained levels FELT in the game, in two layers that mirror how the game itself
+/// applies upgrades:
 ///
-///   1. <b>Overlay</b> — every trained level is registered as a Character Stats temporary
-///      bonus, so it stacks on top of Improve's real values at read time and every consumer
-///      (Armor, Increase Tumble Damage, Constitution, Agility, UI) reflects it instantly.
-///      Never written to StatsManager, so it can never be absorbed by Improve or saved.
+///   1. <b>Persistent layer (via Improve)</b> — Train postfixes Improve's
+///      <c>GetAllocationForStat</c> (see <c>TrainImproveBridgePatch</c>) so every Improve
+///      reconcile writes <c>base + allocation + trained level</c> into the StatsManager
+///      <c>playerUpgrade*</c> dictionaries. The player objects are recreated every level and
+///      re-derive their live values from those dictionaries on spawn (PlayerController /
+///      PhysGrabber / PlayerAvatar <c>LateStart</c>, PlayerTumble <c>SetupDone</c>,
+///      PlayerHealth <c>Fetch</c>), so trained levels land natively for every stat — and
+///      Improve's single reconcile/save-strip machinery keeps the dictionaries clean with
+///      exactly one writer. Character Stats reads the same dictionaries, so consumer mods
+///      (Armor, Increase Tumble Damage, Constitution, Agility, UI) see trained levels too.
 ///
-///   2. <b>Native effect</b> — for the stats whose live effect the game does NOT re-derive
-///      from the dictionary every frame, we mirror the game's own apply on the live component
-///      (Strength → physGrabber.grabStrength, Launch → tumble.tumbleLaunch), tracking exactly
-///      what we added so it can be reversed precisely. Other stats' native effects are driven
-///      entirely by the overlay through the consumer mods for now.
-///
-/// Known limitation: the Character Stats overlay stores one value per (player, key), so while
-/// Berserk is actively overriding Strength/Launch its value wins for those two keys until the
-/// next apply tick re-asserts the trained total. The trained levels for every other key are
-/// unaffected.
+///   2. <b>Transient layer (this class)</b> — a level earned MID-level is in the dictionaries
+///      within Improve's next reconcile, but the game only re-derives live values on spawn.
+///      To make the ding felt immediately, the diff between the current effective level and
+///      the level the spawn derivation delivered is applied straight to the live components,
+///      using the game's own per-level formulas (PunManager's <c>Update…RightAway</c>).
+///      Levels never drop mid-level (progress and the Improve cap only grow), so the diff is
+///      monotonic — applied once, never reversed. The components die with the scene and the
+///      next spawn derives everything from the dictionaries, so the tracking simply resets.
 /// </summary>
 internal static class TrainApplier
 {
-    // Last overlay level we wrote per Character Stats key — lets us skip redundant writes.
-    private static readonly Dictionary<string, int> _overlay = new();
+    // Instances the current baseline belongs to — when either is recreated (level start,
+    // revive), the fresh components already derived the full dictionary values, so the
+    // baseline is retaken and the transient tracking starts over from zero.
+    private static PlayerController? _pc;
+    private static PlayerAvatar? _avatar;
 
-    // Native component effect — the exact avatar we boosted and the deltas we added, so the
-    // reversal removes precisely what was applied even after a respawn swaps the avatar.
-    private static PlayerAvatar? _nativeAvatar;
-    private static float _appliedGrabDelta;
-    private static int _appliedLaunchDelta;
+    // Per stat id: the effective level the spawn derivation delivered, and the transient
+    // levels this class has applied on top of it since.
+    private static readonly Dictionary<string, int> _spawnLevel = new();
+    private static readonly Dictionary<string, int> _appliedLevel = new();
 
     /// <summary>
-    /// Reconcile the overlay and the native effect with the current trained levels. Idempotent
-    /// and self-correcting — safe to call on a timer, on level start, and after a network sync.
+    /// Take the spawn baseline: the dictionaries (kept current by Improve's reconcile plus our
+    /// bridge) delivered the current effective levels to the freshly spawned components, so
+    /// only levels earned AFTER this moment need the transient apply.
+    /// </summary>
+    internal static void BaselineSpawn()
+    {
+        var pc = PlayerController.instance;
+        var avatar = pc != null ? pc.playerAvatarScript : null;
+        if (pc == null || avatar == null) { Invalidate(); return; }
+
+        _pc = pc;
+        _avatar = avatar;
+        _appliedLevel.Clear();
+        foreach (var s in SaveData.Stats)
+            _spawnLevel[s.Id] = SaveData.EffectiveLevel(s);
+    }
+
+    /// <summary>Drop the baseline (scene switch / run reset) — nothing to reverse, the player
+    /// components die with the scene and the next spawn re-derives from the dictionaries.</summary>
+    internal static void Invalidate()
+    {
+        _pc = null;
+        _avatar = null;
+        _spawnLevel.Clear();
+        _appliedLevel.Clear();
+    }
+
+    /// <summary>
+    /// Apply any levels earned since the spawn baseline to the live components. Idempotent —
+    /// each earned level is applied exactly once; safe to call on a timer.
     /// </summary>
     internal static void Apply()
     {
-        if (!Train.Enabled.Value)
+        if (!Train.Enabled.Value) return;
+        if (!SemiFunc.RunIsLevel()) return;
+
+        var pc = PlayerController.instance;
+        if (pc == null) return;
+        var avatar = pc.playerAvatarScript;
+        if (avatar == null || avatar.deadSet) return;
+
+        // A fresh controller/avatar already carries the dictionary values — re-baseline.
+        if (_pc != pc || _avatar != avatar)
         {
-            ClearAll();
+            BaselineSpawn();
             return;
         }
 
-        string? steamId = GetLocalSteamId();
-        if (string.IsNullOrEmpty(steamId))
-            return;
-
-        // 1) Overlay every trainable stat with its effective (Improve-capped) level.
         foreach (var s in SaveData.Stats)
-            SetOverlay(steamId!, s.CsKey, SaveData.EffectiveLevel(s));
-
-        // 2) Native component effect for the local avatar (only while in a level).
-        ApplyNative();
-    }
-
-    private static void SetOverlay(string steamId, string csKey, int level)
-    {
-        if (_overlay.TryGetValue(csKey, out int prev) && prev == level)
-            return;
-        SetTemporaryBonus(steamId, csKey, level); // amount 0 clears the bonus
-        _overlay[csKey] = level;
-    }
-
-    private static void ApplyNative()
-    {
-        var avatar = PlayerController.instance != null
-            ? PlayerController.instance.playerAvatarScript
-            : null;
-
-        // No live, alive avatar in a level → make sure nothing is left applied.
-        if (avatar == null || avatar.deadSet || !SemiFunc.RunIsLevel())
         {
-            ReverseNative();
-            return;
+            if (!_spawnLevel.TryGetValue(s.Id, out int spawn)) continue;
+
+            int want = Math.Max(0, SaveData.EffectiveLevel(s) - spawn);
+            int have = _appliedLevel.TryGetValue(s.Id, out int h) ? h : 0;
+            int diff = want - have;
+            if (diff <= 0) continue; // never reverse mid-level; the next spawn self-corrects
+
+            ApplyLevels(s.Id, diff, pc, avatar);
+            _appliedLevel[s.Id] = want;
+            Train.Logger.LogInfo($"{s.Display} trained to Lv {SaveData.EffectiveLevel(s)} — applied live (+{diff}).");
         }
-
-        int strLevel = SaveData.EffectiveLevel(SaveData.ById("GrabStrength")!);
-        int launchLevel = SaveData.EffectiveLevel(SaveData.ById("TumbleLaunch")!);
-        float grabDelta = 0.2f * strLevel;
-
-        // Only touch the components when something actually changed (avatar swap, or a level
-        // crossed a threshold / the Improve cap moved). Reverse the old delta first so we never
-        // stack our own bonus on top of itself.
-        if (_nativeAvatar != avatar ||
-            _appliedGrabDelta != grabDelta ||
-            _appliedLaunchDelta != launchLevel)
-        {
-            ReverseNative();
-
-            if (avatar.physGrabber != null)
-                avatar.physGrabber.grabStrength += grabDelta;
-            if (avatar.tumble != null)
-                avatar.tumble.tumbleLaunch += launchLevel;
-
-            _nativeAvatar = avatar;
-            _appliedGrabDelta = grabDelta;
-            _appliedLaunchDelta = launchLevel;
-        }
-    }
-
-    private static void ReverseNative()
-    {
-        var avatar = _nativeAvatar;
-        if (avatar != null)
-        {
-            if (avatar.physGrabber != null)
-                avatar.physGrabber.grabStrength -= _appliedGrabDelta;
-            if (avatar.tumble != null)
-                avatar.tumble.tumbleLaunch -= _appliedLaunchDelta;
-        }
-
-        _nativeAvatar = null;
-        _appliedGrabDelta = 0f;
-        _appliedLaunchDelta = 0;
     }
 
     /// <summary>
-    /// Reverse the native effect on a scene switch — the avatar is about to be torn down, and
-    /// the next level re-applies from scratch. The overlay is intentionally left in place so
-    /// trained levels keep showing in the truck and shop.
+    /// The game's own per-level effects, mirrored from PunManager's <c>Update…RightAway</c>
+    /// methods (dictionary writes excluded — Improve owns those).
     /// </summary>
-    internal static void ReverseNativeForSceneSwitch() => ReverseNative();
-
-    /// <summary>Tear everything down — reverse the native effect and drop every overlay.</summary>
-    internal static void ClearAll()
+    private static void ApplyLevels(string statId, int levels, PlayerController pc, PlayerAvatar avatar)
     {
-        ReverseNative();
-
-        string? steamId = GetLocalSteamId();
-        if (!string.IsNullOrEmpty(steamId))
-            foreach (var s in SaveData.Stats)
-                ClearTemporaryBonus(steamId!, s.CsKey);
-
-        _overlay.Clear();
+        switch (statId)
+        {
+            case "Health":
+                if (avatar.playerHealth != null)
+                {
+                    avatar.playerHealth.maxHealth += 20 * levels;
+                    avatar.playerHealth.Heal(20 * levels, effect: false);
+                    TrainTracker.Invalidate(); // don't count the level-up heal as activity
+                }
+                break;
+            case "Stamina":
+                pc.EnergyStart += 10 * levels;
+                pc.EnergyCurrent = pc.EnergyStart;
+                TrainTracker.Invalidate(); // don't count the level-up refill as regen
+                break;
+            case "ExtraJump":
+                pc.JumpExtra += levels;
+                break;
+            case "SprintSpeed":
+                pc.SprintSpeed += levels;
+                pc.SprintSpeedUpgrades += levels;
+                pc.playerOriginalSprintSpeed += levels;
+                break;
+            case "TumbleLaunch":
+                if (avatar.tumble != null)
+                    avatar.tumble.tumbleLaunch += levels;
+                break;
+            case "TumbleClimb":
+                avatar.upgradeTumbleClimb += levels;
+                break;
+            case "TumbleWings":
+                avatar.upgradeTumbleWings += levels;
+                break;
+            case "CrouchRest":
+                avatar.upgradeCrouchRest += levels;
+                break;
+            case "GrabStrength":
+                if (avatar.physGrabber != null)
+                    avatar.physGrabber.grabStrength += 0.2f * levels;
+                break;
+            case "Throw":
+                if (avatar.physGrabber != null)
+                    avatar.physGrabber.throwStrength += 0.3f * levels;
+                break;
+            case "GrabRange":
+                if (avatar.physGrabber != null)
+                    avatar.physGrabber.grabRange += levels;
+                break;
+        }
     }
 }

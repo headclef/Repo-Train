@@ -4,6 +4,25 @@ using UnityEngine;
 
 namespace Train.Patches;
 
+// ── Improve bridge: the persistent apply layer ──
+// Improve's ApplyStats reconciles every stat as base + GetAllocationForStat(stat) into the
+// live StatsManager playerUpgrade* dictionaries (and strips it again before the game saves).
+// Adding the trained effective level to that allocation rides the whole pipeline: one writer,
+// one reconcile, one save-strip — and the game's own spawn derivation (LateStart/SetupDone/
+// Fetch re-read the dictionaries every level, since player objects are recreated per scene)
+// turns the trained levels into native, felt effects for every stat.
+[HarmonyPatch]
+internal static class TrainImproveBridgePatch
+{
+    [HarmonyPatch(typeof(global::Improve.SaveData), "GetAllocationForStat")]
+    [HarmonyPostfix]
+    private static void GetAllocationForStat_Postfix(string statName, ref int __result)
+    {
+        if (!Train.Enabled.Value) return;
+        __result += SaveData.EffectiveLevelForGameField(statName);
+    }
+}
+
 // ── Per-frame sampler: drives continuous-stat counting for the local player ──
 [HarmonyPatch]
 internal static class TrainSamplerPatch
@@ -25,8 +44,9 @@ internal static class TrainLifecyclePatch
     private static Coroutine? _deferredApply;
 
     /// <summary>
-    /// Local player added to a level — re-baseline the sampler, apply trained levels (after a
-    /// short defer so Improve and the game set their values first), and start the watchdog.
+    /// Local player added to a level — re-baseline the sampler and the transient applier
+    /// (after a short defer so Improve's reconcile and the game's spawn derivation settle
+    /// first), and start the watchdog.
     /// </summary>
     [HarmonyPatch(typeof(StatsManager), nameof(StatsManager.PlayerAdd))]
     [HarmonyPostfix]
@@ -41,27 +61,18 @@ internal static class TrainLifecyclePatch
         StartWatchdog();
     }
 
-    /// <summary>A network sync may have reset live stat values — re-assert the overlay/native.</summary>
-    [HarmonyPatch(typeof(PunManager), nameof(PunManager.ReceiveSyncData))]
-    [HarmonyPostfix]
-    private static void ReceiveSyncData_Postfix(bool finalChunk)
-    {
-        if (!finalChunk) return;
-        if (!SemiFunc.RunIsLevel()) return;
-        TrainApplier.Apply();
-    }
-
     /// <summary>
-    /// Leaving the current scene: persist progress, reverse the native effect before the avatar
-    /// is torn down, and stand the coroutines down. The overlay is left in place so trained
-    /// levels keep showing in the truck/shop; the next level re-applies the native effect.
+    /// Leaving the current scene: persist progress and stand the coroutines down. Nothing to
+    /// reverse — the transient component effects die with the scene, and the dictionaries
+    /// (which Improve keeps asserted, trained levels included via the bridge) drive the next
+    /// spawn's derivation.
     /// </summary>
     [HarmonyPatch(typeof(SemiFunc), nameof(SemiFunc.OnSceneSwitch))]
     [HarmonyPrefix]
     private static void OnSceneSwitch_Prefix()
     {
         SaveData.Flush();
-        TrainApplier.ReverseNativeForSceneSwitch();
+        TrainApplier.Invalidate();
         TrainTracker.Invalidate();
         StopWatchdog();
         StopDeferredApply();
@@ -69,7 +80,7 @@ internal static class TrainLifecyclePatch
 
     /// <summary>
     /// The run was reset (team wipe / new game). Trained progress is lifetime and is
-    /// deliberately preserved (like Improve's haul) — we only drop the applied effects.
+    /// deliberately preserved (like Improve's haul) — only the in-scene tracking is dropped.
     /// </summary>
     [HarmonyPatch(typeof(RunManager), nameof(RunManager.ResetProgress))]
     [HarmonyPostfix]
@@ -77,7 +88,7 @@ internal static class TrainLifecyclePatch
     {
         StopWatchdog();
         StopDeferredApply();
-        TrainApplier.ClearAll();
+        TrainApplier.Invalidate();
         SaveData.Flush();
         TrainTracker.Invalidate();
     }
@@ -99,8 +110,10 @@ internal static class TrainLifecyclePatch
 
     private static IEnumerator DeferredApply()
     {
-        // Give Improve and the game a few frames to set base/upgrade values first, so our
-        // native delta lands on top of them.
+        // Give Improve's deferred reconcile (also 3 frames after PlayerAdd) and the game's
+        // spawn derivation time to land the dictionary values on the fresh components, so the
+        // spawn baseline reflects what was actually delivered.
+        yield return null;
         yield return null;
         yield return null;
         yield return null;
@@ -109,7 +122,7 @@ internal static class TrainLifecyclePatch
         if (!SemiFunc.RunIsLevel()) yield break;
 
         TrainTracker.Baseline();
-        TrainApplier.Apply();
+        TrainApplier.BaselineSpawn();
     }
 
     private static void StartWatchdog()
