@@ -84,6 +84,7 @@ public static class TrainMenu
         // so the page truly fills the screen once scaled (a uniform scale alone maxes out on
         // height and leaves the width untouched).
         float extraW = 0f;
+        float labelX = 0f;
         if (panelRt != null && holderRt != null && holderRt.rect.height > 0f && panelRt.rect.height > 0f)
         {
             Rect p0 = panelRt.rect;
@@ -94,21 +95,27 @@ public static class TrainMenu
             panelRt.sizeDelta += new Vector2(extraW, 0f);
             panelRt.localPosition -= new Vector3((0.5f - panelRt.pivot.x) * extraW, 0f, 0f);
 
-            // Widen the scroll mask with it (negative padding expands past the template
-            // default), keeping the bottom strip clear for the pinned buttons.
-            _page.maskPadding = new Padding(-extraW / 2f, 0f, -extraW / 2f, 60f);
+            // Keep the bottom strip clear for the pinned buttons, then widen the scroll mask
+            // around its own centre directly: maskPadding's horizontal shift assumes a
+            // left-edge pivot and drags the mask (and the scroller inside it) off to the left
+            // on the centred pivot the template actually uses.
+            _page.maskPadding = new Padding(0f, 0f, 0f, 60f);
+            var maskRt = _page.maskRectTransform;
+            maskRt.sizeDelta += new Vector2(extraW, 0f);
+            maskRt.localPosition -= new Vector3((0.5f - maskRt.pivot.x) * extraW, 0f, 0f);
 
             // The mask setter only re-tracks the scrollbar vertically — push it to the new
             // right edge ourselves.
             _page.scrollBarRectTransform.localPosition += new Vector3(extraW / 2f, 0f, 0f);
+
+            // The rows live in the scroller, whose transform follows the mask's pivot point;
+            // this offset keeps their original margin from the mask's (now further left) edge.
+            labelX = -maskRt.pivot.x * extraW;
         }
         else
         {
             _page.maskPadding = new Padding(0f, 0f, 0f, 60f);
         }
-
-        // The mask grew extraW/2 to the left; start the rows at its new left edge.
-        float labelX = -extraW / 2f;
 
         AddScrollLabel($"Improve Level (cap): {SaveData.ImproveLevel()}", fontScale, labelX);
 
