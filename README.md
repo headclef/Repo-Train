@@ -57,16 +57,20 @@ configurable unit, so the same curve is fair for everyone.
 |---|---|
 | Tumble Launch | each launch |
 | Extra Jump | each air/extra jump |
-| Throw | each throw |
+| Throw | each throw *(planned — see note below)* |
 | Grab Range | each grab |
 | Grab Strength | each heavy grab |
 | Tumble Climb | each tumble‑climb |
-| Tumble Wings | time gliding |
+| Tumble Wings | time gliding *(planned — see note below)* |
 | Health | damage taken + health restored (any source) |
 | Sprint Speed | distance sprinted |
 | Stamina | distance walked + standing stamina regen |
 | Crouch Rest | stamina regained while crouching |
 
+> **Throw** and **Tumble Wings** don't accumulate progress yet — the stats are listed in the
+> Train menu, but their counting arrives in a future version. You can still raise them
+> through Improve as usual.
+>
 > **Map Player Count** and **Death Head Battery** are not trainable (no natural in‑field
 > action). They remain point‑buyable in Improve.
 
