@@ -1,6 +1,7 @@
 using System.Collections;
 using MenuLib;
 using MenuLib.MonoBehaviors;
+using MenuLib.Structs;
 using TMPro;
 using UnityEngine;
 
@@ -68,7 +69,7 @@ public static class TrainMenu
     {
         Train.Instance.Config.Reload();
 
-        _page = MenuAPI.CreateREPOPopupPage("Train", REPOPopupPage.PresetSide.Right, false, false);
+        _page = MenuAPI.CreateREPOPopupPage("Train", shouldCachePage: false, pageDimmerVisibility: true, spacing: 5f);
 
         const float fontScale = 0.75f;
 
@@ -87,6 +88,20 @@ public static class TrainMenu
             AddScrollLabel(line, fontScale);
         }
 
+        // MenuLib gathers the template's visible parts (Panel background, header, scroll box)
+        // under rectTransform ("Page Content"); the Panel keeps its prefab-local position when
+        // reparented, so its localPosition + rect is the page's visible area in content space.
+        var contentRt = _page.rectTransform;
+        var panelRt = contentRt.Find("Panel") as RectTransform;
+        Rect panel = panelRt != null ? panelRt.rect : new Rect(0, 0, 340, 260);
+        Vector2 panelMin = panelRt != null ? (Vector2)panelRt.localPosition + panel.min : panel.min;
+
+        // Reserve a strip at the bottom of the panel so the scroll list never runs under the
+        // pinned buttons (MenuLib's default bottom padding is 25).
+        _page.maskPadding = new Padding(0, 0, 0, 60);
+
+        // Pin Reset/Close to the bottom of the panel, outside the scroll view, so they are
+        // always visible without scrolling. Parented to Page Content so they scale with it.
         var resetBtn = MenuAPI.CreateREPOButton("Reset Train", () =>
             MenuAPI.OpenPopup("Reset Train", Color.red,
                 "Wipe ALL trained progress? Your earned stat levels will be lost. This cannot be undone.",
@@ -96,15 +111,30 @@ public static class TrainMenu
                     TrainApplier.Apply();
                     _page.ClosePage(true);
                 }),
-            _page.transform, default);
+            contentRt, panelMin + new Vector2(40f, 16f));
         if (resetBtn.labelTMP != null) resetBtn.labelTMP.fontSize *= fontScale;
-        _page.AddElementToScrollView(resetBtn.rectTransform);
+        resetBtn.rectTransform.sizeDelta = new Vector2(160, resetBtn.rectTransform.sizeDelta.y);
 
-        var closeBtn = MenuAPI.CreateREPOButton("Close", () => _page.ClosePage(true), _page.transform, default);
+        var closeBtn = MenuAPI.CreateREPOButton("Close", () => _page.ClosePage(true),
+            contentRt, panelMin + new Vector2(panel.width - 200f, 16f));
         if (closeBtn.labelTMP != null) closeBtn.labelTMP.fontSize *= fontScale;
-        _page.AddElementToScrollView(closeBtn.rectTransform);
+        closeBtn.rectTransform.sizeDelta = new Vector2(160, closeBtn.rectTransform.sizeDelta.y);
 
-        _page.scrollView.spacing = 5;
+        // Full-page: scale the whole page up to (nearly) fill the menu screen and centre it.
+        // Uniform scale keeps the template's look and grows the fonts with it.
+        var holderRt = _page.transform.parent as RectTransform;
+        float scale = 1.3f;
+        if (holderRt != null && holderRt.rect.width > 0f && panel.width > 0f && panel.height > 0f)
+            scale = Mathf.Min(holderRt.rect.width / panel.width, holderRt.rect.height / panel.height) * 0.92f;
+        contentRt.localScale = new Vector3(scale, scale, 1f);
+
+        if (panelRt != null && holderRt != null)
+        {
+            Vector3 target = holderRt.TransformPoint(holderRt.rect.center);
+            Vector3 current = panelRt.TransformPoint(panelRt.rect.center);
+            contentRt.position += target - current;
+        }
+
         _page.OpenPage(false);
     }
 
