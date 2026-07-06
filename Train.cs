@@ -13,14 +13,14 @@ public class Train : BaseUnityPlugin
 {
     private const string PluginGuid = "headclef.Train";
     private const string PluginName = "Train";
-    private const string PluginVersion = "1.0.1";
+    private const string PluginVersion = "1.0.2";
 
     internal static Train Instance { get; private set; } = null!;
     internal new static ManualLogSource Logger => Instance._logger;
     private ManualLogSource _logger => base.Logger;
     internal Harmony? Harmony { get; set; }
 
-    // ── Config ──
+    // â”€â”€ Config â”€â”€
     internal static ConfigEntry<bool> Enabled = null!;
 
     // Continuous-stat unit conversions: how much raw activity equals one use-point. Discrete

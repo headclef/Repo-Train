@@ -93,8 +93,15 @@ menus — and your progress is never reset by dying or finishing a run.
 
 ## Multiplayer
 
-- Fully **client‑side** — Train only ever reads and boosts your own local player.
-- Safe in any lobby; it never writes networked state and never affects other players.
+- Train only ever reads and boosts your own local player — tracking, leveling and saving
+  are fully client‑side, and it never affects other players.
+- Safe in any lobby. As a co-op **client**, trained stats split the same way Improve's do:
+  Health, Sprint, Stamina, Extra Jump, Grab Range, Tumble Climb and Crouch Rest are felt
+  on your own machine and always work; **Grab Strength and Tumble Launch** are simulated
+  on the host's machine, so they take effect only when the **host also has Improve
+  installed** (trained levels ride Improve's co-op bridge automatically — the host does
+  not need Train itself). Without it they stay silently inactive, exactly like the
+  corresponding Improve allocations.
 
 ## License
 
