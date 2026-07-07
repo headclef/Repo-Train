@@ -278,10 +278,10 @@ Train is fully **client‑side** and safe in any lobby — Improve's dictionary 
 local-only, and the transient layer only touches the local player's components. One co-op
 caveat: the game simulates Grab Strength and Tumble Launch on the HOST's machine (grab
 forces in `PhysGrabObject`, the launch impulse in `PlayerTumble.TumbleSet` via a
-MasterClient RPC), so for a non-host player those two trained stats are only felt when the
-host also runs Improve — trained levels ride Improve's network bridge (Improve ≥ 1.1.5),
-which carries `GetAllocationForStat` totals (allocation + trained level) to the host and
-applies them to the player's replica there. The host does not need Train itself.
+MasterClient RPC), so for a non-host player those two trained stats — like the matching
+Improve allocations — only take effect in single player or when hosting. Everything else
+(Health, Sprint, Stamina, Extra Jump, Grab Range, Tumble Climb, Crouch Rest) is read on the
+local player and applies for clients too.
 
 ---
 
