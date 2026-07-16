@@ -98,9 +98,10 @@ menus — and your progress is never reset by dying or finishing a run.
 - Safe in any lobby. As a co-op **client**, trained stats apply the same way Improve's do:
   Health, Sprint, Stamina, Extra Jump, Grab Range, Tumble Climb and Crouch Rest are felt
   on your own machine and always work. **Grab Strength and Tumble Launch** are simulated by
-  R.E.P.O. on the *host's* machine, so — like the matching Improve allocations — those two
-  only take effect for you in single player or when you host. Everything applies in full
-  as the host.
+  R.E.P.O. on the *host's* machine, so — like the matching Improve allocations — they reach
+  you only through Improve's opt-in **Host-Simulated Stat Bridge** (see Improve's readme).
+  Train needs no setting of its own for this: the bridge reports Improve's allocation, and
+  Train's trained levels are already folded into it. Everything applies in full as the host.
 
 ## License
 
