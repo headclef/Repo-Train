@@ -83,25 +83,53 @@ menus — and your progress is never reset by dying or finishing a run.
 - **[Improve](https://github.com/headclef/Repo-Improve)** — provides the level ceiling and
   carries trained levels into the game.
 - **[MenuLib](https://thunderstore.io/c/repo/p/nickklmao/MenuLib/)** — for the Train menu.
+- **[Relay](https://github.com/headclef/Repo-Relay)** — arrives automatically with Improve
+  1.2.0. Train never talks to it, but it is what lets trained Grab Strength and Tumble
+  Launch work while you are a co-op client.
 
 ## Installation
 
 1. Install via **Thunderstore** (recommended) — dependencies are pulled in automatically.
-2. Or manually: place `Train.dll` into your `BepInEx/plugins` folder (alongside Improve
-   and MenuLib).
+2. Or manually: place `Train.dll` into your `BepInEx/plugins` folder (alongside Improve,
+   Relay and MenuLib).
 3. Launch the game and open the **Train** menu to watch your progress.
+
+### Upgrading to 1.0.7
+
+**No Train setting changes** — every option keeps its name, its place and your value, and your
+training progress is untouched. 1.0.7 only follows Improve to 1.2.0, which now requires Relay.
+
+If you play as a **co-op client** and want trained Grab Strength or Tumble Launch to actually
+work, there is one switch to set, and it is not in Train — see [Multiplayer](#multiplayer).
 
 ## Multiplayer
 
 - Train only ever reads and boosts your own local player — tracking, leveling and saving
   are fully client‑side, and it never affects other players.
-- Safe in any lobby. As a co-op **client**, trained stats apply the same way Improve's do:
-  Health, Sprint, Stamina, Extra Jump, Grab Range, Tumble Climb and Crouch Rest are felt
-  on your own machine and always work. **Grab Strength and Tumble Launch** are simulated by
-  R.E.P.O. on the *host's* machine, so — like the matching Improve allocations — they reach
-  you only through Improve's opt-in **Host-Simulated Stat Bridge** (see Improve's readme).
-  Train needs no setting of its own for this: the bridge reports Improve's allocation, and
-  Train's trained levels are already folded into it. Everything applies in full as the host.
+- **As the host or in single player**, every trained stat applies in full.
+- Safe in any lobby. As a co-op **client**, trained stats apply exactly the way Improve's
+  allocations do, because they travel the same road: Health, Sprint, Stamina, Extra Jump,
+  Grab Range, Tumble Climb and Crouch Rest are read on your own machine and always work.
+
+### Trained Grab Strength and Tumble Launch, as a client
+
+R.E.P.O. computes those two on the **host**, from the host's copy of your character — which
+only knows what you purchased. No client-side mod can change that on its own.
+[Relay](https://github.com/headclef/Repo-Relay) carries them there, and it arrives with
+Improve 1.2.0.
+
+**Train needs no code and no setting of its own for this.** Improve reports its allocation to
+Relay, and Train's trained levels are already folded into that number, so they ride along
+without Train knowing Relay exists.
+
+What you do need, **on both your machine and the host's**:
+
+1. Relay installed (it comes with Improve).
+2. `BepInEx/config/headclef.Relay.cfg` → `[Multiplayer]` → `Enabled = true`, or the in-game
+   mod config menu.
+
+Against a host without it, nothing happens and nothing breaks — those two stats just stay
+vanilla for you, exactly as before. Relay ships **off by default**; read its readme first.
 
 ## License
 
