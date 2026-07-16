@@ -77,6 +77,16 @@ internal static class TrainApplier
         if (!Train.Enabled.Value) return;
         if (!SemiFunc.RunIsLevel()) return;
 
+        // On a co-op CLIENT, Improve's StatEffectApplier (>= 1.1.8) tops the live components up
+        // to the full host-unknown shortfall — base + Improve allocation + trained level — in
+        // one place, because the host's dictionary sync only carries the client's purchased
+        // base. It reads Improve's GetAllocationForStat, which our bridge postfix already grows
+        // by the trained level, so it covers Train's levels too. Applying here as well would
+        // double every mid-level training ding, so we defer entirely to it and only do our own
+        // live application on the host / in single player (where the dictionary derivation
+        // delivers the spawn value and this layer just fills in mid-level dings).
+        if (!SemiFunc.IsMasterClientOrSingleplayer()) return;
+
         var pc = PlayerController.instance;
         if (pc == null) return;
         var avatar = pc.playerAvatarScript;

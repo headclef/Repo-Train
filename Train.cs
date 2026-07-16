@@ -13,7 +13,7 @@ public class Train : BaseUnityPlugin
 {
     private const string PluginGuid = "headclef.Train";
     private const string PluginName = "Train";
-    private const string PluginVersion = "1.0.4";
+    private const string PluginVersion = "1.0.5";
 
     internal static Train Instance { get; private set; } = null!;
     internal new static ManualLogSource Logger => Instance._logger;
